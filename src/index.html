@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Server Nexus</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* --- CARBON 60-30-10 PALETTE --- */
+        :root {
+            /* 60% - Dominant Background (Matte Black/Neutral) */
+            --color-60: #0a0a0a; 
+            
+            /* 30% - Secondary (Carbon Gray for Cards/Sidebar) */
+            --color-30: #171717;
+            --color-30-hover: #262626;
+            
+            /* 10% - Accent (Vibrant Lime) */
+            --color-10: #84cc16;
+            --color-10-hover: #a3e635;
+            
+            /* Text Colors */
+            --text-main: #fafafa;
+            --text-muted: #737373; /* Neutral Gray text */
+            
+            /* Functional Colors */
+            --danger: #ef4444;
+            --border: #262626; /* Dark gray border */
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--color-60);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* --- Admin Hiding Utilities --- */
+        .admin-only { display: none !important; }
+        body.is-admin .admin-only { display: block !important; }
+        body.is-admin .action-row .admin-only { display: inline-block !important; }
+
+        /* --- Header --- */
+        .top-bar {
+            height: 70px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 2rem;
+            background: var(--color-60);
+            flex-shrink: 0;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--text-main);
+        }
+
+        .logo-dot {
+            width: 12px;
+            height: 12px;
+            background-color: var(--color-10);
+            border-radius: 2px;
+            box-shadow: 0 0 10px rgba(132, 204, 22, 0.3);
+        }
+
+        .auth-btn {
+            text-decoration: none;
+            color: #000;
+            background-color: var(--color-10);
+            padding: 0.5rem 1.2rem;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+            border: none;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .auth-btn:hover {
+            background-color: var(--color-10-hover);
+            box-shadow: 0 0 15px rgba(132, 204, 22, 0.4);
+        }
+
+        /* --- Layout --- */
+        .layout-grid {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            height: calc(100vh - 70px);
+        }
+
+        /* --- Sidebar --- */
+        .sidebar {
+            background-color: var(--color-30);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+            overflow-y: auto;
+        }
+
+        .section-title {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+
+        .add-server-form {
+            background: rgba(255,255,255,0.03);
+            padding: 1rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        .input-group input {
+            width: 100%;
+            background: var(--color-60);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            margin-bottom: 8px;
+            font-family: monospace;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--color-10);
+        }
+
+        .btn-add {
+            background: transparent;
+            border: 1px solid var(--color-10);
+            color: var(--color-10);
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            width: 100%;
+            transition: 0.2s;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            margin-top: 5px;
+        }
+
+        .btn-add:hover { background: var(--color-10); color: black; }
+
+        .server-list { display: flex; flex-direction: column; gap: 4px; }
+
+        .server-item {
+            padding: 12px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.2s ease;
+            background: transparent;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .server-item:hover { background: var(--color-30-hover); }
+
+        .server-item.active {
+            background: var(--color-30-hover);
+            border-left-color: var(--color-10);
+        }
+
+        .server-info { display: flex; flex-direction: column; gap: 2px; }
+        .server-name { font-weight: 600; font-size: 0.9rem; color: var(--text-main); }
+        .server-ip { color: var(--text-muted); font-size: 0.75rem; font-family: monospace; }
+
+        .server-status-dot {
+            width: 8px; height: 8px; border-radius: 50%; background-color: #333;
+        }
+        .status-online { background-color: var(--color-10); box-shadow: 0 0 8px var(--color-10); }
+        .status-offline { background-color: var(--danger); }
+
+        /* --- Main Content --- */
+        .main-content {
+            padding: 3rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .server-title-big { font-size: 2rem; font-weight: 600; color: var(--text-main); margin: 0; letter-spacing: -0.5px; }
+        .server-subtitle { color: var(--text-muted); margin-top: 8px; font-family: monospace; font-size: 1rem; }
+
+        .action-row {
+            display: flex;
+            gap: 10px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+
+        .btn-action {
+            padding: 8px 18px;
+            border-radius: 4px;
+            border: none;
+            font-size: 0.85rem;
+            cursor: pointer;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+
+        .btn-ping { background: var(--text-main); color: #000; }
+        .btn-ping:hover { background: #ccc; }
+
+        .btn-delete { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+        .btn-delete:hover { background: var(--danger); color: #000; }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.5rem;
+            opacity: 0.5;
+        }
+
+        .stat-card {
+            background: var(--color-30);
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .stat-label { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+        .stat-value { font-size: 1.8rem; font-weight: 700; color: var(--text-main); font-family: monospace; }
+
+        /* Charts */
+        .charts-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .chart-container {
+            background: var(--color-30);
+            padding: 1.5rem;
+            border-radius: 8px;
+            height: 300px; /* Slightly shorter to fit two */
+            position: relative;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .chart-header {
+            margin-bottom: 10px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .canvas-wrapper {
+            flex: 1;
+            position: relative;
+            min-height: 0;
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        @media (max-width: 900px) {
+            .layout-grid { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+            .sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 300px; }
+            .main-content { padding: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="top-bar">
+        <div class="logo">
+            <div class="logo-dot"></div>
+            SERVER NEXUS
+        </div>
+        <a href="/admin/login" id="nav-auth-btn" class="auth-btn">Admin Login</a>
+    </header>
+
+    <div class="layout-grid">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <!-- ADMIN ONLY: Add Server Form -->
+            <div class="add-server-form admin-only">
+                <div class="section-title">New Server</div>
+                <form id="server-form">
+                    <div class="input-group">
+                        <input type="text" name="name" placeholder="Server Name" required />
+                        <input type="text" name="address" placeholder="IP / Hostname" required />
+                        <input type="number" name="port" placeholder="Port" value="25565" required />
+                    </div>
+                    <button type="submit" class="btn-add">Add Target</button>
+                </form>
+            </div>
+
+            <div>
+                <div class="section-title">Targets</div>
+                <div id="server-list-container" class="server-list">
+                    <div style="padding: 10px; color: var(--text-muted); font-size: 0.8rem;">Initializing...</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="dashboard-header">
+                <div>
+                    <h1 class="server-title-big" id="detail-name">Overview</h1>
+                    <div class="server-subtitle" id="detail-host">Select a server</div>
+                </div>
+                <div class="action-row" id="action-buttons">
+                    <button class="btn-action btn-ping" id="btn-ping-now">Refresh</button>
+                    <button class="btn-action btn-delete admin-only" id="btn-delete-server">Remove</button>
+                </div>
+            </div>
+
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Current Status</div>
+                    <div class="stat-value" id="stat-status">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Online Players</div>
+                    <div class="stat-value" id="stat-players">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Ping Count</div>
+                    <div class="stat-value" id="stat-pings">0</div>
+                </div>
+            </div>
+
+            <div class="charts-wrapper" id="charts-wrapper" style="opacity: 0.3;">
+                <!-- Player Chart -->
+                <div class="chart-container">
+                    <div class="chart-header">Player Activity</div>
+                    <div class="canvas-wrapper">
+                        <canvas id="playerChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Uptime Chart -->
+                <div class="chart-container">
+                    <div class="chart-header">Uptime History</div>
+                    <div class="canvas-wrapper">
+                        <canvas id="uptimeChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="chart-overlay" class="empty-state" style="position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(10,10,10,0.8); z-index: 10; display: flex;">
+                <p>Select a target to view telemetry.</p>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        // --- State ---
+        let selectedServerId = null;
+        let playerChart = null;
+        let uptimeChart = null;
+
+        // --- DOM Elements ---
+        const dom = {
+            body: document.body,
+            navAuthBtn: document.getElementById('nav-auth-btn'),
+            form: document.getElementById('server-form'),
+            list: document.getElementById('server-list-container'),
+            detailName: document.getElementById('detail-name'),
+            detailHost: document.getElementById('detail-host'),
+            actions: document.getElementById('action-buttons'),
+            statsGrid: document.getElementById('stats-grid'),
+            btnPing: document.getElementById('btn-ping-now'),
+            btnDelete: document.getElementById('btn-delete-server'),
+            statStatus: document.getElementById('stat-status'),
+            statPlayers: document.getElementById('stat-players'),
+            statPings: document.getElementById('stat-pings'),
+            chartsWrapper: document.getElementById('charts-wrapper'),
+            chartOverlay: document.getElementById('chart-overlay'),
+            playerCanvas: document.getElementById('playerChart'),
+            uptimeCanvas: document.getElementById('uptimeChart')
+        };
+
+        // --- API Helper ---
+        async function api(endpoint, method = 'GET', body = null) {
+            const options = { method, headers: { 'Content-Type': 'application/json' } };
+            if (body) options.body = JSON.stringify(body);
+            const res = await fetch(endpoint, options);
+            if (!res.ok) throw new Error(`API Error: ${res.status}`);
+            return res.json();
+        }
+
+        // --- Auth Logic ---
+        async function checkAuth() {
+            try {
+                const user = await api('/api/auth/me'); 
+                if (user && user.isAdmin) {
+                    enableAdminMode();
+                }
+            } catch (e) {}
+        }
+
+        function enableAdminMode() {
+            dom.body.classList.add('is-admin');
+            dom.navAuthBtn.textContent = "Logout";
+            dom.navAuthBtn.href = "/logout";
+            dom.navAuthBtn.style.backgroundColor = "var(--color-30)";
+            dom.navAuthBtn.style.color = "var(--text-main)";
+        }
+
+        // --- Render Server List ---
+        function renderServerList(servers) {
+            dom.list.innerHTML = '';
+            if (!servers || servers.length === 0) {
+                dom.list.textContent = 'No servers found.';
+                return;
+            }
+            servers.forEach(s => {
+                // 1. Create the container
+                const el = document.createElement('div');
+                el.className = `server-item ${selectedServerId == s.id ? 'active' : ''}`;
+
+                // 2. Build internal structure safely using standard DOM methods
+
+                // Info Container
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'server-info';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'server-name';
+                nameSpan.textContent = s.name; // <--- SECURE: treats HTML as raw text
+
+                const ipSpan = document.createElement('span');
+                ipSpan.className = 'server-ip';
+                ipSpan.textContent = `${s.address}:${s.port}`; // <--- SECURE
+
+                infoDiv.appendChild(nameSpan);
+                infoDiv.appendChild(ipSpan);
+
+                // Status Dot
+                const dotDiv = document.createElement('div');
+                dotDiv.className = `server-status-dot ${s.last_online ? 'status-online' : 'status-offline'}`;
+
+                // Assemble
+                el.appendChild(infoDiv);
+                el.appendChild(dotDiv);
+
+                el.onclick = () => selectServer(s);
+                dom.list.appendChild(el);
+            });
+        }
+
+        function updateStats(isOnline, players, pingCount) {
+            dom.statStatus.textContent = isOnline ? "ONLINE" : "OFFLINE";
+            dom.statStatus.style.color = isOnline ? "var(--color-10)" : "var(--danger)";
+            dom.statPlayers.textContent = isOnline ? players : "--";
+            dom.statPings.textContent = pingCount;
+            dom.statsGrid.style.opacity = "1";
+            dom.chartsWrapper.style.opacity = "1";
+            
+            // Hide overlay inside main content only
+            dom.chartOverlay.style.display = 'none';
+        }
+
+        // --- Player Chart (Smooth Area) ---
+        function initPlayerChart(labels, dataPoints) {
+            if (playerChart) playerChart.destroy();
+
+            const ctx = dom.playerCanvas.getContext('2d');
+            let gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, 'rgba(132, 204, 22, 0.2)'); 
+            gradient.addColorStop(1, 'rgba(132, 204, 22, 0.0)');
+
+            playerChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Players',
+                        data: dataPoints,
+                        borderColor: '#84cc16',
+                        backgroundColor: gradient,
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        pointHoverBackgroundColor: '#84cc16'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#262626' },
+                            ticks: { color: '#737373', font: {family: 'monospace'} }
+                        },
+                        x: { display: false } // Hide X axis on top chart to save space
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#171717',
+                            titleColor: '#fff',
+                            bodyColor: '#ccc',
+                            borderColor: '#333',
+                            borderWidth: 1,
+                            displayColors: false
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- Uptime Chart (Stepped Line) ---
+        function initUptimeChart(labels, dataPoints) {
+            if (uptimeChart) uptimeChart.destroy();
+
+            const ctx = dom.uptimeCanvas.getContext('2d');
+            
+            uptimeChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Status',
+                        data: dataPoints,
+                        borderColor: '#84cc16', 
+                        backgroundColor: 'rgba(132, 204, 22, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        stepped: true, // This makes it look like a logic analyzer
+                        pointRadius: 0,
+                        pointHoverRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        y: {
+                            min: 0,
+                            max: 1.2,
+                            grid: { color: '#262626' },
+                            ticks: { 
+                                color: '#737373', 
+                                font: {family: 'monospace'},
+                                callback: function(value) {
+                                    if (value === 0) return 'OFF';
+                                    if (value === 1) return 'ON';
+                                    return '';
+                                }
+                            }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#737373', maxTicksLimit: 8, font: {family: 'monospace'} }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#171717',
+                            titleColor: '#fff',
+                            bodyColor: '#ccc',
+                            borderColor: '#333',
+                            borderWidth: 1,
+                            displayColors: false,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.parsed.y === 1 ? "Online" : "Offline";
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- Main Actions ---
+        async function loadServers() {
+            try {
+                const servers = await api('/servers');
+                renderServerList(servers);
+
+                // AUTO-SELECT LOGIC:
+                // If no server is currently selected, and we have servers, select the first one.
+                if (!selectedServerId && servers.length > 0) {
+                    selectServer(servers[0]);
+                } else if (selectedServerId) {
+                    // If we have a selection, just re-highlight row without re-fetching history (optional optimization)
+                    const el = document.querySelectorAll('.server-item')[0]; // simplified for demo
+                    // In reality, just let user keep selection.
+                }
+
+            } catch (e) { console.error(e); }
+        }
+
+        async function selectServer(server) {
+            selectedServerId = server.id;
+            dom.detailName.textContent = server.name;
+            dom.detailHost.textContent = `${server.address}:${server.port}`;
+            dom.actions.style.opacity = "1";
+            dom.actions.style.pointerEvents = "auto";
+            
+            // Visually update list (simple redraw)
+            const allItems = document.querySelectorAll('.server-item');
+            // Re-render list to update 'active' class is cleanest way
+            const servers = await api('/servers');
+            renderServerList(servers);
+
+            try {
+                const history = await api(`/servers/${server.id}/pings`);
+                
+                const labels = history.map(h => new Date(h.pinged_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+                
+                // Data for Player Chart
+                const playerData = history.map(h => h.player_count !== undefined ? h.player_count : (h.online ? 1 : 0));
+                
+                // Data for Uptime Chart (1 = Online, 0 = Offline)
+                const uptimeData = history.map(h => h.online ? 1 : 0);
+                
+                const latest = history[history.length - 1];
+                const isOnline = latest ? latest.online : false;
+                const currentPlayers = latest && latest.player_count !== undefined ? latest.player_count : 0;
+
+                updateStats(isOnline, currentPlayers, history.length);
+                initPlayerChart(labels, playerData);
+                initUptimeChart(labels, uptimeData);
+
+            } catch (e) { console.error("History error", e); }
+        }
+
+        // --- Event Listeners ---
+        dom.form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(dom.form);
+            try {
+                await api('/servers', 'POST', {
+                    name: formData.get('name'),
+                    address: formData.get('address'),
+                    port: parseInt(formData.get('port'))
+                });
+                dom.form.reset();
+                loadServers();
+            } catch(err) { alert("Error adding server"); }
+        });
+
+        dom.btnPing.addEventListener('click', async () => {
+            if(!selectedServerId) return;
+            dom.btnPing.disabled = true;
+            dom.btnPing.textContent = "Processing...";
+            try {
+                await api(`/servers/${selectedServerId}/ping`);
+                // Fetch updated details
+                const servers = await api('/servers');
+                const s = servers.find(srv => srv.id === selectedServerId);
+                if(s) await selectServer(s);
+            } catch(e) { console.error(e); }
+            dom.btnPing.disabled = false;
+            dom.btnPing.textContent = "Refresh";
+        });
+
+        dom.btnDelete.addEventListener('click', async () => {
+            if(!selectedServerId || !confirm("Confirm deletion?")) return;
+            try {
+                await api(`/servers/${selectedServerId}`, 'DELETE');
+                selectedServerId = null;
+                dom.detailName.textContent = "Overview";
+                dom.detailHost.textContent = "Select a server";
+                dom.actions.style.opacity = "0";
+                dom.statsGrid.style.opacity = "0.5";
+                dom.chartsWrapper.style.opacity = "0.3";
+                dom.chartOverlay.style.display = "flex";
+                
+                if(playerChart) playerChart.destroy();
+                if(uptimeChart) uptimeChart.destroy();
+                
+                loadServers();
+            } catch(e) { console.error(e); }
+        });
+
+        // Init
+        checkAuth();
+        loadServers();
+
+    </script>
+</body>
+</html>
