@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Admin Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="style.css" />
+    <style>
+        body { align-items: center; justify-content: center; }
+        .card { background: #171717; border: 1px solid #262626; padding: 1.5rem; border-radius: 8px; width: 320px; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h1 style="text-transform: uppercase; color: #a3a3a3; font-size: 1.1rem; margin-bottom: 1rem;">Admin Login</h1>
+    <form method="post" action="/auth/login">
+        <div id="error-msg" style="color: #ef4444; font-size: 0.8rem; display: none; margin-bottom: 10px;">Invalid credentials.</div>
+
+        <div class="input-group">
+            <input name="username" placeholder="Username" autocomplete="username" />
+            <input name="password" type="password" placeholder="Password" autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn-add" style="background: #84cc16; color: black; margin-top: 10px;">Sign in</button>
+    </form>
+    <a href="/" style="display: block; margin-top: 15px; font-size: 0.8rem; color: #a3a3a3; text-decoration: none;">Back to dashboard</a>
+</div>
+<script>
+    if (new URLSearchParams(window.location.search).get("error") === "1") {
+        document.getElementById("error-msg").style.display = "block";
+    }
+</script>
+</body>
+</html>

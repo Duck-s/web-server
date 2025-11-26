@@ -1,0 +1,7 @@
+target/
+.idea/
+**/*.rs.bk
+sqlite.db
+sqlite.db-shm
+sqlite.db-wal
+.env
