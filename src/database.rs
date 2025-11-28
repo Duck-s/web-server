@@ -1,5 +1,5 @@
 use serde::Serialize;
-use sqlx::{migrate::MigrateDatabase, Row, Sqlite, SqlitePool, Error};
+use sqlx::{Error, Row, Sqlite, SqlitePool, migrate::MigrateDatabase};
 
 #[derive(Clone)]
 pub struct Database {
@@ -54,8 +54,12 @@ impl Database {
         // 3. PERFORMANCE: Enable WAL Mode (Write-Ahead Logging)
         // This allows concurrent reads and writes, preventing the UI from freezing
         // while the background pinger is writing data.
-        sqlx::query("PRAGMA journal_mode = WAL;").execute(&pool).await?;
-        sqlx::query("PRAGMA synchronous = NORMAL;").execute(&pool).await?;
+        sqlx::query("PRAGMA journal_mode = WAL;")
+            .execute(&pool)
+            .await?;
+        sqlx::query("PRAGMA synchronous = NORMAL;")
+            .execute(&pool)
+            .await?;
 
         let db = Self { pool };
 
@@ -85,8 +89,8 @@ impl Database {
             );
             "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         // ping_results table
         sqlx::query(
@@ -105,8 +109,8 @@ impl Database {
             );
             "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         // PERFORMANCE: Index for faster graph loading
         // We frequently query by server_id and sort by date.
@@ -114,10 +118,10 @@ impl Database {
             r#"
             CREATE INDEX IF NOT EXISTS idx_ping_results_server_date 
             ON ping_results(server_id, pinged_at DESC);
-            "#
+            "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         // admin_users table
         sqlx::query(
@@ -130,8 +134,8 @@ impl Database {
             );
             "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         // admin_sessions table
         sqlx::query(
@@ -145,8 +149,8 @@ impl Database {
             );
             "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -165,11 +169,11 @@ impl Database {
                 VALUES (?, ?, ?)
                 "#,
             )
-                .bind("Local test server")
-                .bind("localhost")
-                .bind(25565_i64)
-                .execute(&self.pool)
-                .await?;
+            .bind("Local test server")
+            .bind("localhost")
+            .bind(25565_i64)
+            .execute(&self.pool)
+            .await?;
 
             println!("Inserted default server (localhost:25565)");
         }
@@ -182,11 +186,11 @@ impl Database {
     /// Deletes ping history older than `days` to keep database size manageable.
     pub async fn cleanup_old_pings(&self, days: i64) -> Result<u64, Error> {
         let res = sqlx::query(
-            r#"DELETE FROM ping_results WHERE pinged_at < date('now', '-' || ? || ' days')"#
+            r#"DELETE FROM ping_results WHERE pinged_at < date('now', '-' || ? || ' days')"#,
         )
-            .bind(days)
-            .execute(&self.pool)
-            .await?;
+        .bind(days)
+        .execute(&self.pool)
+        .await?;
 
         Ok(res.rows_affected())
     }
@@ -211,19 +215,26 @@ impl Database {
     }
 
     pub async fn list_servers(&self) -> Result<Vec<Server>, Error> {
-        sqlx::query_as::<_, Server>("SELECT id, name, address, port, created_at FROM servers ORDER BY id ASC")
-            .fetch_all(&self.pool)
-            .await
+        sqlx::query_as::<_, Server>(
+            "SELECT id, name, address, port, created_at FROM servers ORDER BY id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
     }
 
     pub async fn get_server_by_id(&self, id: i64) -> Result<Option<Server>, Error> {
-        sqlx::query_as::<_, Server>("SELECT id, name, address, port, created_at FROM servers WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
+        sqlx::query_as::<_, Server>(
+            "SELECT id, name, address, port, created_at FROM servers WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
-    pub async fn get_last_ping_for_server(&self, server_id: i64) -> Result<Option<PingResult>, Error> {
+    pub async fn get_last_ping_for_server(
+        &self,
+        server_id: i64,
+    ) -> Result<Option<PingResult>, Error> {
         sqlx::query_as::<_, PingResult>(
             r#"
             SELECT id, server_id, pinged_at, online, players_online, players_max, version, motd
@@ -231,11 +242,11 @@ impl Database {
             WHERE server_id = ?
             ORDER BY pinged_at DESC
             LIMIT 1
-            "#
+            "#,
         )
-            .bind(server_id)
-            .fetch_optional(&self.pool)
-            .await
+        .bind(server_id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     pub async fn insert_ping_result(
@@ -266,25 +277,32 @@ impl Database {
         Ok(res.last_insert_rowid())
     }
 
-    pub async fn list_ping_results_for_server(&self, server_id: i64) -> Result<Vec<PingResult>, Error> {
-        // Limit history to last 100 points to prevent frontend lag if data grows huge
+    pub async fn list_ping_results_for_server(
+        &self,
+        server_id: i64,
+    ) -> Result<Vec<PingResult>, Error> {
+        // Limit history to last 144 points to prevent frontend lag if data grows huge
         sqlx::query_as::<_, PingResult>(
             r#"
             SELECT id, server_id, pinged_at, online, players_online, players_max, version, motd
             FROM ping_results
             WHERE server_id = ?
             ORDER BY pinged_at DESC
-            LIMIT 100
-            "#
+            LIMIT 144
+            "#,
         )
-            .bind(server_id)
-            .fetch_all(&self.pool)
-            .await
+        .bind(server_id)
+        .fetch_all(&self.pool)
+        .await
     }
 
     // --- AUTH ---
 
-    pub async fn ensure_admin_user(&self, username: &str, password_hash: &str) -> Result<(), Error> {
+    pub async fn ensure_admin_user(
+        &self,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<(), Error> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM admin_users WHERE username = ?")
             .bind(username)
             .fetch_one(&self.pool)
@@ -303,14 +321,18 @@ impl Database {
 
     pub async fn get_admin_by_username(&self, username: &str) -> Result<Option<AdminUser>, Error> {
         sqlx::query_as::<_, AdminUser>(
-            "SELECT id, username, password_hash, created_at FROM admin_users WHERE username = ?"
+            "SELECT id, username, password_hash, created_at FROM admin_users WHERE username = ?",
         )
-            .bind(username)
-            .fetch_optional(&self.pool)
-            .await
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await
     }
 
-    pub async fn create_admin_session(&self, admin_id: i64, session_token: &str) -> Result<(), Error> {
+    pub async fn create_admin_session(
+        &self,
+        admin_id: i64,
+        session_token: &str,
+    ) -> Result<(), Error> {
         sqlx::query("INSERT INTO admin_sessions (admin_id, session_token) VALUES (?, ?)")
             .bind(admin_id)
             .bind(session_token)
@@ -319,18 +341,21 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_admin_by_session_token(&self, session_token: &str) -> Result<Option<AdminUser>, Error> {
+    pub async fn get_admin_by_session_token(
+        &self,
+        session_token: &str,
+    ) -> Result<Option<AdminUser>, Error> {
         sqlx::query_as::<_, AdminUser>(
             r#"
             SELECT u.id, u.username, u.password_hash, u.created_at
             FROM admin_sessions s
             JOIN admin_users u ON s.admin_id = u.id
             WHERE s.session_token = ?
-            "#
+            "#,
         )
-            .bind(session_token)
-            .fetch_optional(&self.pool)
-            .await
+        .bind(session_token)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     pub async fn delete_session(&self, session_token: &str) -> Result<(), Error> {
