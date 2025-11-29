@@ -156,6 +156,24 @@ body.is-admin .action-row .admin-only { display: inline-block !important; }
     margin-top: 5px;
 }
 
+.range-selector {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+.btn-range {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 5px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: 0.2s;
+}
+.btn-range:hover { color: var(--text-main); border-color: var(--text-main); }
+.btn-range.active { background: var(--color-10); color: #000; border-color: var(--color-10); }
+
 .btn-add:hover {
     background: var(--color-10);
     color: black;

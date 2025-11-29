@@ -2,7 +2,7 @@ mod database;
 
 use axum::{
     Json, Router,
-    extract::{Form, Path, State},
+    extract::{Form, Path, State, Query},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 use tokio::time::{Duration, sleep};
-use tower_http::services::ServeDir; // Ensure tower-http is in Cargo.toml with features=["fs"]
+use tower_http::services::ServeDir;
 
 use argon2::{
     Argon2,
@@ -26,6 +26,12 @@ use rand::{RngCore, rngs::OsRng};
 #[derive(Clone)]
 struct AppState {
     db: Database,
+}
+
+#[derive(Deserialize)]
+struct HistoryParams {
+    range: Option<String>,    // "day", "week", "month"
+    since_id: Option<i64>,    // For incremental updates
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,13 +84,13 @@ async fn main() {
 
     // 3. Background Task
     let bg_state = state.clone();
-    tokio::spawn(async move {
+    let background_task_handle = tokio::spawn(async move {
         
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let interval = 600; // Ten minutes 600 seconds I should probably change this to be an env variable
+        let interval = 60; // Ten minutes 600 seconds I should probably change this to be an env variable
         let seconds_past = now % interval;
         let wait = interval - seconds_past;
         sleep(Duration::from_secs(wait)).await; //  Round to the nearest interval before pinging next
@@ -136,8 +142,12 @@ async fn main() {
         .await
         .unwrap();
 
+    println!("Aborting background tasks.");
+    background_task_handle.abort();
+
+    println!("Closing database...");
     db_for_shutdown.close().await;
-    println!("Database closed.");
+    println!("Database closed, Bye!");
 }
 
 // --- HANDLERS ---
@@ -305,8 +315,10 @@ async fn delete_server(
 
 async fn ping_and_store(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<SimpleResponse>, StatusCode> {
+    let _ = get_admin_from_headers(&state, &headers).await?;
     ping_one_server(&state, id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -316,14 +328,173 @@ async fn ping_and_store(
 async fn list_server_ping_history(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(params): Query<HistoryParams>,
 ) -> Result<Json<Vec<PingResult>>, StatusCode> {
-    let mut res = state
+
+    // 1. Determine time window
+    let seconds = match params.range.as_deref() {
+        Some("week") => Some(60 * 60 * 24 * 7),
+        Some("month") => Some(60 * 60 * 24 * 30),
+        Some("day") | _ => Some(60 * 60 * 24), // default to day
+    };
+
+    // If asking for incremental updates (since_id), ignore the time window
+    let window = if params.since_id.is_some() { None } else { seconds };
+
+    let raw_pings = state
         .db
-        .list_ping_results_for_server(id)
+        .get_pings_subset(id, params.since_id, window)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    res.reverse();
-    Ok(Json(res))
+
+    // For small result sets or incremental updates, just return raw
+    let should_optimize =
+        params.since_id.is_none()
+            && (params.range.as_deref() == Some("month") || params.range.as_deref() == Some("week"));
+
+    if !should_optimize {
+        return Ok(Json(raw_pings));
+    }
+
+    if raw_pings.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+
+    // 2. Downsampling aggressiveness
+    // per_chunk_secs = how coarse we compress long online segments
+    let per_chunk_secs: i64 = match params.range.as_deref() {
+        Some("month") => 6 * 60 * 60, // 6h chunks -> ~4 points per day
+        Some("week") => 60 * 60,      // 1h chunks -> ~24 points per day
+        _ => 15 * 60,
+    };
+
+    // Treat any segment shorter than this as a "blip"
+    let short_blip_secs: i64 = 20 * 60; // 20 minutes
+
+    let mut optimized = Vec::new();
+
+    // 3. Split into segments where online/offline remains constant
+    let mut seg_start = 0usize;
+    let mut seg_state = raw_pings[0].online;
+
+    for idx in 1..raw_pings.len() {
+        let state_changed = raw_pings[idx].online != seg_state;
+        if state_changed {
+            compress_segment(
+                &raw_pings,
+                seg_start,
+                idx - 1,
+                seg_state,
+                per_chunk_secs,
+                short_blip_secs,
+                &mut optimized,
+            );
+            seg_start = idx;
+            seg_state = raw_pings[idx].online;
+        }
+    }
+
+    // last segment
+    compress_segment(
+        &raw_pings,
+        seg_start,
+        raw_pings.len() - 1,
+        seg_state,
+        per_chunk_secs,
+        short_blip_secs,
+        &mut optimized,
+    );
+
+    Ok(Json(optimized))
+}
+
+// ==========================================
+// SEGMENT COMPRESSION LOGIC
+// ==========================================
+fn compress_segment(
+    raw: &[PingResult],
+    start: usize,
+    end: usize,
+    is_online: bool,
+    per_chunk_secs: i64,
+    blip_secs: i64,
+    out: &mut Vec<PingResult>,
+) {
+    if start > end {
+        return;
+    }
+
+    let first = &raw[start];
+    let last = &raw[end];
+
+    let start_time = parse_time(&first.pinged_at);
+    let end_time = parse_time(&last.pinged_at);
+    let duration = end_time - start_time;
+    let len = end + 1 - start;
+
+    // 1) Very short segments -> blips (keep them detailed)
+    if duration <= blip_secs {
+        if len <= 2 {
+            for idx in start..=end {
+                out.push(raw[idx].clone());
+            }
+        } else {
+            out.push(first.clone());
+            out.push(last.clone());
+        }
+        return;
+    }
+
+    // 2) Long offline segments -> keep just edges
+    if !is_online {
+        out.push(first.clone());
+        out.push(last.clone());
+        return;
+    }
+
+    // 3) Long online segment -> downsample into coarse chunks
+    let mut chunk_ref_idx = start;
+    let mut chunk_start_time = parse_time(&raw[start].pinged_at);
+    let mut chunk_sum_players: i64 = 0;
+    let mut chunk_count: i64 = 0;
+
+    for idx in start..=end {
+        let p = &raw[idx];
+        let t = parse_time(&p.pinged_at);
+
+        chunk_sum_players += p.players_online.unwrap_or(0) as i64;
+        chunk_count += 1;
+
+        if t - chunk_start_time >= per_chunk_secs {
+            let mut avg_ping = raw[chunk_ref_idx].clone();
+            if chunk_count > 0 {
+                let avg = chunk_sum_players / chunk_count;
+                avg_ping.players_online = Some(avg);
+            }
+            avg_ping.pinged_at = p.pinged_at.clone();
+            out.push(avg_ping);
+
+            chunk_ref_idx = idx;
+            chunk_start_time = t;
+            chunk_sum_players = 0;
+            chunk_count = 0;
+        }
+    }
+
+    // Flush final partial chunk
+    if chunk_count > 0 {
+        let mut avg_ping = raw[chunk_ref_idx].clone();
+        let avg = chunk_sum_players / chunk_count;
+        avg_ping.players_online = Some(avg);
+        out.push(avg_ping);
+    }
+}
+
+// Helper to parse SQL date string to seconds (simplistic for this logic)
+fn parse_time(t: &str) -> i64 {
+    use chrono::{DateTime};
+    
+    DateTime::parse_from_rfc3339(t).unwrap_or_default().timestamp()
 }
 
 // Utilities
@@ -344,47 +515,38 @@ async fn ping_all_servers_concurrently(state: &AppState) -> Result<(), ()> {
 }
 
 async fn ping_one_server(state: &AppState, id: i64) -> Result<(), ()> {
+
+
     let s = match state.db.get_server_by_id(id).await {
         Ok(Some(v)) => v,
         _ => return Ok(()),
     };
 
-    let mut stream = match TcpStream::connect((s.address.as_str(), s.port as u16)).await {
-        Ok(s) => s,
-        Err(_) => {
-            let _ = state
-                .db
-                .insert_ping_result(s.id, false, None, None, None, None, None)
-                .await;
-            return Ok(());
-        }
+    // WRAP THE NETWORK LOGIC IN A TIMEOUT
+    // This ensures we never hang longer than 3 seconds per server
+    let ping_logic = async {
+        let mut stream = TcpStream::connect((s.address.as_str(), s.port as u16)).await?;
+        ping(&mut stream, s.address.as_str(), s.port as u16).await
     };
 
-    match ping(&mut stream, s.address.as_str(), s.port as u16).await {
-        Ok(r) => {
-            let desc = r
-                .description
-                .as_ref()
-                .map(|v| v.to_string())
-                .unwrap_or_default();
-            let _ = state
-                .db
-                .insert_ping_result(
-                    s.id,
-                    true,
-                    None,
-                    Some(r.online_players as i64),
-                    Some(r.max_players as i64),
-                    Some(r.version.as_str()),
-                    Some(desc.as_str()),
-                )
-                .await;
+    match tokio::time::timeout(Duration::from_secs(3), ping_logic).await {
+        Ok(Ok(r)) => {
+            // Success!
+            let desc = r.description.as_ref().map(|v| v.to_string()).unwrap_or_default();
+            let _ = state.db.insert_ping_result(
+                s.id,
+                true,
+                None,
+                Some(r.online_players as i64),
+                Some(r.max_players as i64),
+                Some(r.version.as_str()),
+                Some(desc.as_str()),
+            ).await;
         }
-        Err(_) => {
-            let _ = state
-                .db
-                .insert_ping_result(s.id, false, None, None, None, None, None)
-                .await;
+        _ => {
+            // Either Timeout (Err) or Ping Error (Ok(Err))
+            // We treat both as offline
+            let _ = state.db.insert_ping_result(s.id, false, None, None, None, None, None).await;
         }
     }
     Ok(())

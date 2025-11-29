@@ -184,6 +184,9 @@ impl Database {
     // --- MAINTENANCE ---
 
     /// Deletes ping history older than `days` to keep database size manageable.
+/*
+    /// Should be implemented however I just want more data to test it properly
+    
     pub async fn cleanup_old_pings(&self, days: i64) -> Result<u64, Error> {
         let res = sqlx::query(
             r#"DELETE FROM ping_results WHERE pinged_at < date('now', '-' || ? || ' days')"#,
@@ -194,7 +197,7 @@ impl Database {
 
         Ok(res.rows_affected())
     }
-
+*/
     // --- QUERIES ---
     pub async fn insert_server(&self, name: &str, address: &str, port: i64) -> Result<i64, Error> {
         let res = sqlx::query("INSERT INTO servers (name, address, port) VALUES (?, ?, ?)")
@@ -249,6 +252,42 @@ impl Database {
         .await
     }
 
+    pub async fn get_pings_subset(
+        &self,
+        server_id: i64,
+        since_id: Option<i64>,
+        seconds_ago: Option<u64>,
+    ) -> Result<Vec<PingResult>, Error> {
+        let mut sql = String::from(
+            r#"
+            SELECT id, server_id, pinged_at, online, players_online, players_max, version, motd
+            FROM ping_results
+            WHERE server_id = ?
+            "#,
+        );
+
+        // If we only want new data (Incremental update)
+        if let Some(_) = since_id {
+            sql.push_str(" AND id > ?");
+        }
+
+        // If we are fetching a specific range (Day/Week/Month)
+        if let Some(sec) = seconds_ago {
+            // SQLite specific date math
+            sql.push_str(&format!(" AND pinged_at >= datetime('now', '-{} seconds')", sec));
+        }
+
+        sql.push_str(" ORDER BY pinged_at ASC"); // We want oldest to newest for the graph
+
+        let mut query = sqlx::query_as::<_, PingResult>(&sql).bind(server_id);
+
+        if let Some(sid) = since_id {
+            query = query.bind(sid);
+        }
+
+        query.fetch_all(&self.pool).await
+    }
+
     pub async fn insert_ping_result(
         &self,
         server_id: i64,
@@ -277,6 +316,7 @@ impl Database {
         Ok(res.last_insert_rowid())
     }
 
+    /*
     pub async fn list_ping_results_for_server(
         &self,
         server_id: i64,
@@ -295,6 +335,7 @@ impl Database {
         .fetch_all(&self.pool)
         .await
     }
+    */
 
     // --- AUTH ---
 
