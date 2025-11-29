@@ -2,7 +2,7 @@ mod database;
 
 use axum::{
     Json, Router,
-    extract::{Form, Path, State, Query},
+    extract::{Form, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
@@ -30,8 +30,8 @@ struct AppState {
 
 #[derive(Deserialize)]
 struct HistoryParams {
-    range: Option<String>,    // "day", "week", "month"
-    since_id: Option<i64>,    // For incremental updates
+    range: Option<String>, // "day", "week", "month"
+    since_id: Option<i64>, // For incremental updates
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,12 +85,11 @@ async fn main() {
     // 3. Background Task
     let bg_state = state.clone();
     let background_task_handle = tokio::spawn(async move {
-        
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let interval = 60; // Ten minutes 600 seconds I should probably change this to be an env variable
+        let interval = 600; // Ten minutes 600 seconds I should probably change this to be an env variable
         let seconds_past = now % interval;
         let wait = interval - seconds_past;
         sleep(Duration::from_secs(wait)).await; //  Round to the nearest interval before pinging next
@@ -330,7 +329,6 @@ async fn list_server_ping_history(
     Path(id): Path<i64>,
     Query(params): Query<HistoryParams>,
 ) -> Result<Json<Vec<PingResult>>, StatusCode> {
-
     // 1. Determine time window
     let seconds = match params.range.as_deref() {
         Some("week") => Some(60 * 60 * 24 * 7),
@@ -339,7 +337,11 @@ async fn list_server_ping_history(
     };
 
     // If asking for incremental updates (since_id), ignore the time window
-    let window = if params.since_id.is_some() { None } else { seconds };
+    let window = if params.since_id.is_some() {
+        None
+    } else {
+        seconds
+    };
 
     let raw_pings = state
         .db
@@ -348,9 +350,8 @@ async fn list_server_ping_history(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // For small result sets or incremental updates, just return raw
-    let should_optimize =
-        params.since_id.is_none()
-            && (params.range.as_deref() == Some("month") || params.range.as_deref() == Some("week"));
+    let should_optimize = params.since_id.is_none()
+        && (params.range.as_deref() == Some("month") || params.range.as_deref() == Some("week"));
 
     if !should_optimize {
         return Ok(Json(raw_pings));
@@ -492,9 +493,11 @@ fn compress_segment(
 
 // Helper to parse SQL date string to seconds (simplistic for this logic)
 fn parse_time(t: &str) -> i64 {
-    use chrono::{DateTime};
-    
-    DateTime::parse_from_rfc3339(t).unwrap_or_default().timestamp()
+    use chrono::DateTime;
+
+    DateTime::parse_from_rfc3339(t)
+        .unwrap_or_default()
+        .timestamp()
 }
 
 // Utilities
@@ -515,8 +518,6 @@ async fn ping_all_servers_concurrently(state: &AppState) -> Result<(), ()> {
 }
 
 async fn ping_one_server(state: &AppState, id: i64) -> Result<(), ()> {
-
-
     let s = match state.db.get_server_by_id(id).await {
         Ok(Some(v)) => v,
         _ => return Ok(()),
@@ -532,21 +533,31 @@ async fn ping_one_server(state: &AppState, id: i64) -> Result<(), ()> {
     match tokio::time::timeout(Duration::from_secs(3), ping_logic).await {
         Ok(Ok(r)) => {
             // Success!
-            let desc = r.description.as_ref().map(|v| v.to_string()).unwrap_or_default();
-            let _ = state.db.insert_ping_result(
-                s.id,
-                true,
-                None,
-                Some(r.online_players as i64),
-                Some(r.max_players as i64),
-                Some(r.version.as_str()),
-                Some(desc.as_str()),
-            ).await;
+            let desc = r
+                .description
+                .as_ref()
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            let _ = state
+                .db
+                .insert_ping_result(
+                    s.id,
+                    true,
+                    None,
+                    Some(r.online_players as i64),
+                    Some(r.max_players as i64),
+                    Some(r.version.as_str()),
+                    Some(desc.as_str()),
+                )
+                .await;
         }
         _ => {
             // Either Timeout (Err) or Ping Error (Ok(Err))
             // We treat both as offline
-            let _ = state.db.insert_ping_result(s.id, false, None, None, None, None, None).await;
+            let _ = state
+                .db
+                .insert_ping_result(s.id, false, None, None, None, None, None)
+                .await;
         }
     }
     Ok(())

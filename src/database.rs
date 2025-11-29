@@ -184,20 +184,20 @@ impl Database {
     // --- MAINTENANCE ---
 
     /// Deletes ping history older than `days` to keep database size manageable.
-/*
-    /// Should be implemented however I just want more data to test it properly
-    
-    pub async fn cleanup_old_pings(&self, days: i64) -> Result<u64, Error> {
-        let res = sqlx::query(
-            r#"DELETE FROM ping_results WHERE pinged_at < date('now', '-' || ? || ' days')"#,
-        )
-        .bind(days)
-        .execute(&self.pool)
-        .await?;
+    /*
+        /// Should be implemented however I just want more data to test it properly
 
-        Ok(res.rows_affected())
-    }
-*/
+        pub async fn cleanup_old_pings(&self, days: i64) -> Result<u64, Error> {
+            let res = sqlx::query(
+                r#"DELETE FROM ping_results WHERE pinged_at < date('now', '-' || ? || ' days')"#,
+            )
+            .bind(days)
+            .execute(&self.pool)
+            .await?;
+
+            Ok(res.rows_affected())
+        }
+    */
     // --- QUERIES ---
     pub async fn insert_server(&self, name: &str, address: &str, port: i64) -> Result<i64, Error> {
         let res = sqlx::query("INSERT INTO servers (name, address, port) VALUES (?, ?, ?)")
@@ -274,7 +274,10 @@ impl Database {
         // If we are fetching a specific range (Day/Week/Month)
         if let Some(sec) = seconds_ago {
             // SQLite specific date math
-            sql.push_str(&format!(" AND pinged_at >= datetime('now', '-{} seconds')", sec));
+            sql.push_str(&format!(
+                " AND pinged_at >= datetime('now', '-{} seconds')",
+                sec
+            ));
         }
 
         sql.push_str(" ORDER BY pinged_at ASC"); // We want oldest to newest for the graph
