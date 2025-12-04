@@ -85,6 +85,7 @@ async fn main() {
     // 3. Background Task
     let bg_state = state.clone();
     let background_task_handle = tokio::spawn(async move {
+        const CLEANUP_INTERVAL: u64 = 60 * 60 * 24; // 24H
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -92,12 +93,21 @@ async fn main() {
         let interval = 600; // Ten minutes 600 seconds I should probably change this to be an env variable
         let seconds_past = now % interval;
         let wait = interval - seconds_past;
-        sleep(Duration::from_secs(wait)).await; //  Round to the nearest interval before pinging next
+        sleep(Duration::from_secs(wait)).await;
+
+        // Track when we last ran DB cleanup
+        let mut last_cleanup = SystemTime::now();
 
         // Ping each server every ten minutes
         loop {
             if let Err(e) = ping_all_servers_concurrently(&bg_state).await {
                 eprintln!("Background ping error: {:?}", e);
+            }
+            if last_cleanup.elapsed().unwrap() >= Duration::from_secs(CLEANUP_INTERVAL) {
+                if let Err(e) = bg_state.db.cleanup_old_pings(60).await {
+                    eprintln!("Failed to cleanup old pings: {:?}", e);
+                }
+                last_cleanup = SystemTime::now();
             }
             sleep(Duration::from_secs(interval)).await;
         }
@@ -246,25 +256,33 @@ async fn auth_me(
     }
 }
 
-async fn list_servers(State(state): State<AppState>) -> Result<Json<Vec<ServerApi>>, StatusCode> {
+#[derive(Debug, Serialize)]
+struct LightServerApi {
+    pub id: i64,
+    pub name: String,
+    pub address: String,
+    pub last_online: bool,
+}
+
+async fn list_servers(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<LightServerApi>>, StatusCode> {
     let servers = state
         .db
         .list_servers()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut res = Vec::new();
+    let mut res: Vec<LightServerApi> = Vec::new();
     for s in servers {
         let last = state
             .db
             .get_last_ping_for_server(s.id)
             .await
             .unwrap_or(None);
-        res.push(ServerApi {
+        res.push(LightServerApi {
             id: s.id,
             name: s.name,
             address: s.address,
-            port: s.port,
-            created_at: s.created_at,
             last_online: last.map(|p| p.online).unwrap_or(false),
         });
     }
@@ -364,8 +382,8 @@ async fn list_server_ping_history(
     // 2. Downsampling aggressiveness
     // per_chunk_secs = how coarse we compress long online segments
     let per_chunk_secs: i64 = match params.range.as_deref() {
-        Some("month") => 6 * 60 * 60, // 6h chunks -> ~4 points per day
-        Some("week") => 60 * 60,      // 1h chunks -> ~24 points per day
+        Some("month") => 6 * 60 * 60, // 6h chunks -> ~4 points per day -> 116-128
+        Some("week") => 60 * 60,      // 1h chunks -> ~24 points per day -> 168 per week
         _ => 15 * 60,
     };
 
@@ -373,6 +391,9 @@ async fn list_server_ping_history(
     let short_blip_secs: i64 = 20 * 60; // 20 minutes
 
     let mut optimized = Vec::new();
+
+    // TODO:
+    // Fix this to actually do what i want
 
     // 3. Split into segments where online/offline remains constant
     let mut seg_start = 0usize;
